@@ -103,7 +103,7 @@ __forceinline__ __device__ auto convert_layout_acc_rowcol(Layout acc_layout)
     static_assert(decltype(rank(acc_layout))::value == 3);
     
     Layout l = logical_divide(acc_layout, Shape<_2>{}); 
-    // This is just the logical divide on the first mode of the acc_layout. See notebook/convert_layout_acc_rowcol.cu
+    // This is just the logical divide on the first mode of the acc_layout. See misc/convert_layout_acc_rowcol.cu
     // ((2, 2), MMA_M, MMA_N)
 
     return make_layout(
@@ -128,7 +128,7 @@ __forceinline__ __device__ auto convert_layout_acc_rowcol(Layout acc_layout)
 // Why do we need to reshape?
 // Because other thread partitioning like tOrVt are done by tiled_mma
 // However rP is the output of gemm 1 and of shape (MMA=4, MMA_M, MMA_N) which is not compatible with tiled_mma
-// see the A layout of m16n8k16 in notebook/m16n8k16.cu
+// see the A layout of m16n8k16 in misc/m16n8k16.cu
 template<typename MMA_traits, typename Layout>
 __forceinline__ __device__ auto convert_layout_acc_Aregs(Layout acc_layout)
 {

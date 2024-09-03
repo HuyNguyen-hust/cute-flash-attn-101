@@ -163,7 +163,7 @@ struct Flash_fwd_kernel_traits
     using SmemLayoutVtransposedNoSwizzle = decltype(get_nonswizzle_portion(SmemLayoutVtransposed{}));
     // What does SmemLayoutVTransposedNoSwizzle look like?
     // It is the SmemLayoutVTransposed if you start with non-swizzle SmemLayoutAtomQ
-    // run notebook/get_nonswizzle_portion.cu for better understanding
+    // run misc/get_nonswizzle_portion.cu for better understanding
 
     // // Similar to 66Ring code
     // using SmemLayoutVtAtom = decltype(

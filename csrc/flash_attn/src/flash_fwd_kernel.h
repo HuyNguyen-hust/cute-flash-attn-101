@@ -263,7 +263,7 @@ inline __device__ void compute_attn_1rowblock(const Params params, const int bid
         // Why do we need to reshape?
         // Because other thread partitioning like tOrVt are done by tiled_mma
         // However rP is the output of gemm 1 and of shape (MMA=4, MMA_M, MMA_N) which is not compatible with tiled_mma
-        // see the A layout of m16n8k16 in notebook/m16n8k16.cu
+        // see the A layout of m16n8k16 in misc/m16n8k16.cu
         Tensor tOrP = make_tensor(rP.data(), flash::convert_layout_acc_Aregs<Kernel_traits::TiledMma>(rP.layout()));
         flash::gemm_rs(acc_o, tOrP, tOrVt, tOsVt, tiled_mma, smem_tiled_copy_V, smem_thr_copy_V);
     }
