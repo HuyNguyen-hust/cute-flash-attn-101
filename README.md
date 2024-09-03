@@ -3,7 +3,7 @@
 My personal project to self-learn and implement FlashAttention, based on studying [Tridao's FA repo](https://github.com/Dao-AILab/flash-attention).
 
 ## About
-I read 2 repos [Tridao's FA repo](https://github.com/Dao-AILab/flash-attention), [66Ring's Tiny FA Implementation](https://github.com/66RING/tiny-flash-attention) and then write the simplified version. Throughout this project, I've added detailed comments on everything I didn't initially understand. I hope these notes can help others who are also learning about FlashAttention.
+I read 2 repos [Tridao's FA repo](https://github.com/Dao-AILab/flash-attention), [66Ring's Tiny FA Implementation](https://github.com/66RING/tiny-flash-attention) and then write the simplified version with CuTe. Throughout this project, I've added detailed comments on everything I didn't initially understand. I hope these notes can help others who are also learning about FlashAttention.
 ## Build and Run
 ```
 git submodule init
