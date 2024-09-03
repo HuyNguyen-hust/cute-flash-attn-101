@@ -2,4 +2,4 @@
 request_gpu.sh
 build/
 dist/
-flash_attention_101.egg-info
+flash_attention_101.egg-info/

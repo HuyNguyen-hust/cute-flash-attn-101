@@ -15,15 +15,15 @@ struct BlockInfo
     }
 
     template <typename index_t>
-    __forceinline__ __device__ index_t q_offset(const index_t batch_stride, const int bidb) const
+    __forceinline__ __device__ index_t q_offset(const index_t batch_stride, const index_t head_stride, const int bidb, const int bidh) const
     {
-        return batch_stride * bidb;
+        return batch_stride * bidb + head_stride * bidh;
     }
 
     template <typename index_t>
-    __forceinline__ __device__ index_t k_offset(const index_t batch_stride, const int bidb) const
+    __forceinline__ __device__ index_t k_offset(const index_t batch_stride, const index_t head_stride, const int bidb, const int bidh) const
     {
-        return batch_stride * bidb;
+        return batch_stride * bidb + head_stride * bidh;
     }
 
     // Sequence length for Q

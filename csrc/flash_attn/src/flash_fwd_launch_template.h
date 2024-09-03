@@ -5,6 +5,8 @@
 #include "flash.h"
 #include "flash_fwd_kernel.h"
 
+#include "utils.h"
+
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
 #define ARCH_SUPPORTS_FLASH
 #define KERNEL_PARAM_MODIFIER __grid_constant__
@@ -64,5 +66,12 @@ template<typename T, bool Is_causal>
 void run_mha_fwd_hdim32(Flash_fwd_params &params, cudaStream_t stream)
 {
     constexpr static int Headdim = 32;
+    run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 128, 128, 4, T>, Is_causal>(params, stream);
+}
+
+template<typename T, bool Is_causal>
+void run_mha_fwd_hdim64(Flash_fwd_params &params, cudaStream_t stream)
+{
+    constexpr static int Headdim = 64;
     run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 128, 128, 4, T>, Is_causal>(params, stream);
 }

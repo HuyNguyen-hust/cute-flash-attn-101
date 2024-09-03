@@ -47,6 +47,8 @@ ext_modules.append(
             "csrc/flash_attn/flash_api.cpp",
             "csrc/flash_attn/src/flash_fwd_hdim32_bf16_causal_sm80.cu",
             "csrc/flash_attn/src/flash_fwd_hdim32_fp16_causal_sm80.cu",
+            "csrc/flash_attn/src/flash_fwd_hdim64_bf16_causal_sm80.cu",
+            "csrc/flash_attn/src/flash_fwd_hdim64_fp16_causal_sm80.cu",
         ],
         extra_compile_args={
             # add c compile flags

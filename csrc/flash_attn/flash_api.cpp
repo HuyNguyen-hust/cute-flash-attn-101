@@ -35,21 +35,21 @@ void set_params_fprop(
     params.v_ptr = v.data_ptr();
     params.o_ptr = out.data_ptr();
 
-    params.q_batch_stride = q.stride(0);    // seq_len_q * num_heads * head_size
-    params.q_row_stride = q.stride(-3);     // num_heads * head_size
-    params.q_head_stride = q.stride(-2);    // head_size
+    params.q_batch_stride = q.stride(0);
+    params.q_head_stride  = q.stride(-3);
+    params.q_row_stride   = q.stride(-2);
 
     params.k_batch_stride = k.stride(0);
-    params.k_row_stride = k.stride(-3);
-    params.k_head_stride = k.stride(-2);
+    params.k_head_stride  = k.stride(-3);
+    params.k_row_stride   = k.stride(-2);
 
     params.v_batch_stride = v.stride(0);
-    params.v_row_stride = v.stride(-3);
-    params.v_head_stride = v.stride(-2);
+    params.v_head_stride  = v.stride(-3);
+    params.v_row_stride   = v.stride(-2);
 
     params.o_batch_stride = out.stride(0);
-    params.o_row_stride = out.stride(-3);
-    params.o_head_stride = out.stride(-2);
+    params.o_head_stride  = out.stride(-3);
+    params.o_row_stride   = out.stride(-2);
 
     // softmax scale
     params.scale_softmax = softmax_scale;
@@ -73,12 +73,11 @@ void run_mha_fwd(
 )
 {
     FP16_SWITCH(!params.is_bf16, [&] {
+        // These switches are to specify the template parameters
         HEADDIM_SWITCH(params.d, [&] {
-            BOOL_SWITCH(params.is_causal, Is_causal, [&] {
-                // These switches are to specify the template parameters
-                run_mha_fwd_<elem_type, kHeadDim, Is_causal>(params, stream);
+            constexpr bool Is_causal = true;
+            run_mha_fwd_<elem_type, kHeadDim, Is_causal>(params, stream);
             });
-        });
     });
 }
 
@@ -93,10 +92,10 @@ mha_fwd(
 )
 {   
     // args shape
-    // q: [batch_size, seqlen_q, num_heads, head_size]
-    // k: [batch_size, seqlen_k, num_heads, head_size]
-    // v: [batch_size, seqlen_k, num_heads, head_size]
-    // out: [batch_size, seqlen_q, num_heads, head_size]
+    // args shape
+    // q: [batch_size, num_heads, seqlen_q, head_size]
+    // k: [batch_size, num_heads, seqlen_k, head_size]
+    // v: [batch_size, num_heads, seqlen_k, head_size]
     // simplified version: same num_heads (no MQA/GQA)
 
     // pre-conditions
@@ -116,11 +115,11 @@ mha_fwd(
     // extract shape
     auto sizes = out.sizes();
     int batch_size = sizes[0];
-    int seqlen_q = sizes[1];
-    int num_heads = sizes[2];
+    int num_heads = sizes[1];
+    int seqlen_q = sizes[2];
     int head_size = sizes[3];
 
-    int seqlen_k = k.sizes()[1];
+    int seqlen_k = k.sizes()[2];
 
     // set params
     Flash_fwd_params params;

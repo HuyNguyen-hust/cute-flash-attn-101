@@ -30,7 +30,7 @@ struct Flash_kernel_traits
 #endif
 
     using ElementAccum = float;
-    using index_t = int64_t;
+    using index_t = uint32_t;
 
     // MMA Atom
     // since 800, cuda supports bf16
@@ -164,6 +164,19 @@ struct Flash_fwd_kernel_traits
     // What does SmemLayoutVTransposedNoSwizzle look like?
     // It is the SmemLayoutVTransposed if you start with non-swizzle SmemLayoutAtomQ
     // run notebook/get_nonswizzle_portion.cu for better understanding
+
+    // // Similar to 66Ring code
+    // using SmemLayoutVtAtom = decltype(
+    //     composition(Swizzle<kSwizzle, 3, 3>{},
+    //                 Layout<Shape<Int<kBlockKSmem>, Int<kBlockN>>,
+    //                        Stride<_1, Int<kBlockKSmem>>>{}));
+
+    // using SmemLayoutVtransposed = decltype(tile_to_shape(
+    //                                     SmemLayoutVtAtom{},
+    //                                     Shape<Int<kHeadDim>, Int<kBlockN>>{}));
+
+    // using SmemLayoutVtransposedNoSwizzle = Layout<Shape<Int<kHeadDim>, Int<kBlockN>>,
+    //                                             Stride<_1, Int<kHeadDim>>>;
 
     using SmemLayoutAtomO = decltype(
         composition(

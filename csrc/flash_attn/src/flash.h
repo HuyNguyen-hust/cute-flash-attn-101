@@ -7,7 +7,7 @@
 struct Qkv_params
 {   
     // index_t is used in calculating offset
-    using index_t = int64_t;
+    using index_t = uint32_t;
 
     // qkv pointers
     void* __restrict__ q_ptr;

@@ -84,12 +84,12 @@ __forceinline__ __device__ void scale_apply_exp2(Tensor<Engine0, Layout0> &tenso
     }
 }
 
-template <int kNrows> // 2 * MMA_M, number of rows that each thread is responsible for inside 1 tile
+template <int kNRows> // 2 * MMA_M, number of rows that each thread is responsible for inside 1 tile
 struct Softmax
 {   
     using TensorT = decltype(
         make_tensor<float>(
-            make_shape(Int<kNrows>{})
+            make_shape(Int<kNRows>{})
         )
     );
     TensorT row_max, row_sum;
@@ -101,7 +101,7 @@ struct Softmax
     {   
         // Reshape acc_s from (MMA=4, MMA_M, MMA_N) to ((2, MMA_M), (2, MMA_N))
         Tensor scores = make_tensor(acc_s.data(), flash::convert_layout_acc_rowcol(acc_s.layout()));
-        static_assert(decltype(size<0>(scores))::value == kNrows); // 2 * MMA_M
+        static_assert(decltype(size<0>(scores))::value == kNRows); // 2 * MMA_M
         if (Is_first)
         {
             // m_i^(j) = max(m_i^(j-1), rowmax(S_i^(j)))
@@ -121,7 +121,7 @@ struct Softmax
             
             // Reshape acc_o from (MMA=4, MMA_M, MMA_N) to ((2, MMA_M), (2, MMA_N))
             Tensor acc_o_rowcol = make_tensor(acc_o.data(), flash::convert_layout_acc_rowcol(acc_o.layout()));
-            static_assert(decltype(size<0>(acc_o_rowcol))::value == kNrows); // 2 * MMA_M
+            static_assert(decltype(size<0>(acc_o_rowcol))::value == kNRows); // 2 * MMA_M
 
             #pragma unroll
             for (int mi = 0; mi < size<0>(acc_o_rowcol); ++mi)
@@ -146,6 +146,24 @@ struct Softmax
             // still need one quad_allreduce_ to do reduce between threads
         }
     }
+
+    template<typename Tensor0>
+    __forceinline__ __device__ void normalize_softmax_lse(Tensor0 &acc_o) 
+    {
+        SumOp<float> sum_op;
+        quad_allreduce_(row_sum, row_sum, sum_op);
+        Tensor acc_o_rowcol = make_tensor(acc_o.data(), flash::convert_layout_acc_rowcol(acc_o.layout()));
+        static_assert(decltype(size<0>(acc_o_rowcol))::value == kNRows);
+        #pragma unroll
+        for (int mi = 0; mi < size<0>(acc_o_rowcol); ++mi) {
+            float sum = row_sum(mi);
+            float inv_sum = (sum == 0.f) ? 1.f : 1.f / sum;
+            float scale = inv_sum;
+            #pragma unroll
+            for (int ni = 0; ni < size<1>(acc_o_rowcol); ++ni) { acc_o_rowcol(mi, ni) *= scale; }
+        }
+    }
+
 };
 
 } // end namespace flash

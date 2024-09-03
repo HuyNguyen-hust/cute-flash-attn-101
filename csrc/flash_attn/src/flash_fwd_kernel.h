@@ -40,52 +40,56 @@ inline __device__ void compute_attn_1rowblock(const Params params, const int bid
     // BlockInfo: This class is later used for calculating offset
     BlockInfo binfo(params);
 
+    if (m_block * kBlockM >= params.seqlen_q) return;
+
     // n_block_min, n_block_max
     const int n_block_min = 0;
-    const int n_block_max = std::min(cute::ceil_div(params.seqlen_k, kBlockN), cute::ceil_div(m_block * kBlockM, kBlockN));
+    const int n_block_max = std::min(cute::ceil_div(params.seqlen_k, kBlockN), cute::ceil_div((m_block+1) * kBlockM, kBlockN));
 
     // tensors mQ, mK, mV
     // shape
-    // mQ: [seqlen_q, h, d]
-    // mK: [seqlen_k, h, d]
-    // mV: [seqlen_k, h, d]
+    // mQ: [seqlen_q, d]
+    // mK: [seqlen_k, d]
+    // mV: [seqlen_k, d]
     // all in row-major
     Tensor mQ = make_tensor(
-        make_gmem_ptr(reinterpret_cast<Element*>(params.q_ptr) + binfo.q_offset(params.q_batch_stride, bidb)),
-        make_shape(params.seqlen_q, params.h, params.d),
-        make_stride(params.q_row_stride, params.q_head_stride, _1{})
+        make_gmem_ptr(reinterpret_cast<const Element*>(params.q_ptr) + binfo.q_offset(params.q_batch_stride, params.q_head_stride, bidb, bidh)),
+        make_shape(params.seqlen_q, Int<kHeadDim>{}),
+        make_stride(Int<kHeadDim>{}, _1{})
     );
     Tensor mK = make_tensor(
-        make_gmem_ptr(reinterpret_cast<Element*>(params.k_ptr) + binfo.k_offset(params.k_batch_stride, bidb)),
-        make_shape(params.seqlen_k, params.h, params.d),
-        make_stride(params.k_row_stride, params.k_head_stride, _1{})
+        make_gmem_ptr(reinterpret_cast<const Element*>(params.k_ptr) + binfo.k_offset(params.k_batch_stride, params.k_head_stride, bidb, bidh)),
+        make_shape(params.seqlen_k, Int<kHeadDim>{}),
+        make_stride(Int<kHeadDim>{}, _1{})
     );
     Tensor mV = make_tensor(
-        make_gmem_ptr(reinterpret_cast<Element*>(params.v_ptr) + binfo.k_offset(params.v_batch_stride, bidb)),
-        make_shape(params.seqlen_k, params.h, params.d),
-        make_stride(params.v_row_stride, params.v_head_stride, _1{})
+        make_gmem_ptr(reinterpret_cast<const Element*>(params.v_ptr) + binfo.k_offset(params.v_batch_stride, params.v_head_stride, bidb, bidh)),
+        make_shape(params.seqlen_k, Int<kHeadDim>{}),
+        make_stride(Int<kHeadDim>{}, _1{})
     );
 
     // tiling to get gQ, gK, gV
     // shape
-    // gQ: [kBlockM, kHeadDim] // Why is no nblocksM? We are doing parallel computation over rowblocks
-    // gK: [kBlockN, kHeadDim, nblocksN] with nblocksN = ceildiv(seqlen_k, kBlockN)
-    // gV: [kBlockN, kHeadDim, nblocksN]
+    // gQ: [kBlockM, kHeadDim, nblocksK]
+    // gK: [kBlockN, kHeadDim, nblocksK]
+    // gV: [kBlockN, kHeadDim, nblocksK]
+    // nBlocksK = 1
+    // I don't understand why Tri tiling doesn't work, this one from 66Ring works, but I see this tiling is similar with doing gemm tiling
     // all in row-major
     Tensor gQ = local_tile(
-        mQ(_, bidh, _),
-        make_shape(kBlockM, kHeadDim),
-        make_coord(m_block, 0) // take the m_block-th rowblock
+        mQ,
+        Shape<Int<kBlockM>, Int<kHeadDim>>{},
+        make_coord(m_block, _) // take the m_block-th rowblock
     );
     Tensor gK = local_tile(
-        mK(_, bidh, _),
-        make_shape(kBlockN, kHeadDim), 
-        make_coord(_, 0) // take all nblocksN colblocks
+        mK,
+        Shape<Int<kBlockN>, Int<kHeadDim>>{}, 
+        make_coord(n_block_max-1, _) // take the last colblocks, we do accumulate in reverse order, later explain
     );
     Tensor gV = local_tile(
-        mV(_, bidh, _),
-        make_shape(kBlockN, kHeadDim),
-        make_coord(_, 0)
+        mV,
+        Shape<Int<kBlockN>, Int<kHeadDim>>{},
+        make_coord(n_block_max-1, _)
     );
 
     // tensors on shared memory sQ, sK, sV
@@ -99,11 +103,11 @@ inline __device__ void compute_attn_1rowblock(const Params params, const int bid
         typename Kernel_traits::SmemLayoutQ{}
     );
     Tensor sK = make_tensor(
-        make_smem_ptr(sQ.data() + size(sQ)),
+        sQ.data() + size(sQ),
         typename Kernel_traits::SmemLayoutKV{}
     );
     Tensor sV = make_tensor(
-        make_smem_ptr(sK.data() + size(sK)),
+        sK.data() + size(sK),
         typename Kernel_traits::SmemLayoutKV{}
     );
 
@@ -126,27 +130,28 @@ inline __device__ void compute_attn_1rowblock(const Params params, const int bid
     // .get()?
 
     // G2S TiledCopy QKV
-    auto gmem_tiled_copy_QKV = typename Kernel_traits::GmemTiledCopyQKV{};
+    typename Kernel_traits::GmemTiledCopyQKV gmem_tiled_copy_QKV;
     auto gmem_thr_copy_QKV = gmem_tiled_copy_QKV.get_thread_slice(tidx);
-    Tensor tQgQ = gmem_thr_copy_QKV.partition_S(gQ);  // (QCPY, QCPY_M, QCPY_K)
+    Tensor tQgQ = gmem_thr_copy_QKV.partition_S(gQ(_, _, 0));  // (QCPY, QCPY_M, QCPY_K)
+    Tensor tKgK = gmem_thr_copy_QKV.partition_S(gK(_, _, 0));  // (KCPY, KCPY_M, KCPY_K)
+    Tensor tVgV = gmem_thr_copy_QKV.partition_S(gV(_, _, 0));  // (VCPY, VCPY_M, VCPY_K)
+    
     Tensor tQsQ = gmem_thr_copy_QKV.partition_D(sQ);
-    Tensor tKgK = gmem_thr_copy_QKV.partition_S(gK);  // (KCPY, KCPY_M, KCPY_K, nblocksN)
-    Tensor tKsK = gmem_thr_copy_QKV.partition_D(sK);
-    Tensor tVgV = gmem_thr_copy_QKV.partition_S(gV);  // (VCPY, VCPY_M, VCPY_K, nblocksN)
     Tensor tVsV = gmem_thr_copy_QKV.partition_D(sV);
+    Tensor tKsK = gmem_thr_copy_QKV.partition_D(sK);
 
     // TiledMMA
     // do MMA partitioning for 2 gemms
     // tS means thread partitioning for gemm on S
     // tO means thread partitioning for gemm on O
-    auto tiled_mma = typename Kernel_traits::TiledMma{};
+    typename Kernel_traits::TiledMma tiled_mma;
     auto thr_mma = tiled_mma.get_thread_slice(tidx);
     // first gemm (line 8 of algo): Q @ K^T
-    Tensor tSrQ = thr_mma.partition_fragment_A(sQ);
-    Tensor tSrK = thr_mma.partition_fragment_B(sK);
+    Tensor tSrQ = thr_mma.partition_fragment_A(gQ(_, _, 0));
+    Tensor tSrK = thr_mma.partition_fragment_B(gK(_, _, 0));
     // second gemm (line 10 of algo): P @ V
     Tensor tOrVt = thr_mma.partition_fragment_B(sVtNoSwizzle);
-
+    
     // O accumulator
     // use tiled_mma to partition on O tile (kBlockM, kHeadDim)
     Tensor acc_o = partition_fragment_C(tiled_mma, Shape<Int<kBlockM>, Int<kHeadDim>>{});   // (MMA=4, MMA_M, MMA_K)
@@ -156,9 +161,11 @@ inline __device__ void compute_attn_1rowblock(const Params params, const int bid
     auto smem_tiled_copy_Q = make_tiled_copy_A(typename Kernel_traits::SmemCopyAtom{}, tiled_mma);
     auto smem_thr_copy_Q = smem_tiled_copy_Q.get_thread_slice(tidx);
     Tensor tSsQ = smem_thr_copy_Q.partition_S(sQ);
+
     auto smem_tiled_copy_K = make_tiled_copy_B(typename Kernel_traits::SmemCopyAtom{}, tiled_mma);
     auto smem_thr_copy_K = smem_tiled_copy_K.get_thread_slice(tidx);
     Tensor tSsK = smem_thr_copy_K.partition_S(sK);
+
     // second gemm (line 10 of algo): P @ V
     auto smem_tiled_copy_V = make_tiled_copy_B(typename Kernel_traits::SmemCopyAtomTransposed{}, tiled_mma);
     auto smem_thr_copy_V = smem_tiled_copy_V.get_thread_slice(tidx);
@@ -181,13 +188,12 @@ inline __device__ void compute_attn_1rowblock(const Params params, const int bid
     //      softmax_rescale_o (line 9 of algo)
     //      gemm 2 (line 10 of algo): P @ V
 
-
     // fetch Q rowblock to Smem
+
     cute::copy(gmem_tiled_copy_QKV, tQgQ, tQsQ);
 
     // prefetch the last K colblock
-    int n_block = n_block_max - 1;
-    cute::copy(gmem_tiled_copy_QKV, tKgK(_, _, _, n_block), tKsK);
+    cute::copy(gmem_tiled_copy_QKV, tKgK, tKsK);
     cute::cp_async_fence(); // commit
 
     // mask
@@ -199,8 +205,8 @@ inline __device__ void compute_attn_1rowblock(const Params params, const int bid
     constexpr int n_masking_steps = cute::ceil_div(kBlockM, kBlockN);
 
     clear(acc_o);
-
     // inner loop
+    int n_block = n_block_max - 1;
     #pragma unroll
     for (int masking_step = 0; masking_step < n_masking_steps; masking_step++, n_block--)
     {
@@ -214,7 +220,9 @@ inline __device__ void compute_attn_1rowblock(const Params params, const int bid
         __syncthreads();
 
         // fetch corresponding V block to Smem (advance gV)
-        cute::copy(gmem_tiled_copy_QKV, tVgV(_, _, _, n_block), tVsV);
+        gV = local_tile(mV, make_tile(Int<kBlockN>{}, Int<kHeadDim>{}), make_coord(n_block, _));
+        tVgV = gmem_thr_copy_QKV.partition_S(gV(_, _, 0));
+        cute::copy(gmem_tiled_copy_QKV, tVgV, tVsV);
         cp_async_fence(); // commit
 
         // gemm 1: acc_s = Q @ K^T
@@ -236,7 +244,9 @@ inline __device__ void compute_attn_1rowblock(const Params params, const int bid
         // prefetch the next K colblock
         if (n_block > n_block_min)
         {
-            cute::copy(gmem_tiled_copy_QKV, tKgK(_, _, _, n_block-1), tKsK);
+            gK = local_tile(mK, make_tile(Int<kBlockN>{}, Int<kHeadDim>{}), make_coord(n_block-1, _));
+            tKgK = gmem_thr_copy_QKV.partition_S(gK(_, _, 0));
+            cute::copy(gmem_tiled_copy_QKV, tKgK, tKsK);
             cp_async_fence(); // commit
         }
 
@@ -271,7 +281,9 @@ inline __device__ void compute_attn_1rowblock(const Params params, const int bid
         __syncthreads();
 
         // fetch corresponding V block to Smem (advance gV)
-        cute::copy(gmem_tiled_copy_QKV, tVgV(_, _, _, n_block), tVsV);
+        gV = local_tile(mV, make_tile(Int<kBlockN>{}, Int<kHeadDim>{}), make_coord(n_block, _));
+        tVgV = gmem_thr_copy_QKV.partition_S(gV(_, _, 0));
+        cute::copy(gmem_tiled_copy_QKV, tVgV, tVsV);
         cp_async_fence(); // commit
 
         // gemm 1: acc_s = Q @ K^T
@@ -284,7 +296,9 @@ inline __device__ void compute_attn_1rowblock(const Params params, const int bid
         // prefetch the next K colblock
         if (n_block > n_block_min)
         {
-            cute::copy(gmem_tiled_copy_QKV, tKgK(_, _, _, n_block-1), tKsK);
+            gK = local_tile(mK, make_tile(Int<kBlockN>{}, Int<kHeadDim>{}), make_coord(n_block-1, _));
+            tKgK = gmem_thr_copy_QKV.partition_S(gK(_, _, 0));
+            cute::copy(gmem_tiled_copy_QKV, tKgK, tKsK);
             cp_async_fence(); // commit
         }
         
@@ -297,6 +311,7 @@ inline __device__ void compute_attn_1rowblock(const Params params, const int bid
     }
 
     // epilouge
+    softmax.template normalize_softmax_lse(acc_o); // I don't include LSE computation here but still call it because we need to do reduce over threads per row
     Tensor rO = flash::convert_type<Element>(acc_o);  // (MMA=4, MMA_M, MMA_N)
 
     // copy O from thread register to shared memory
@@ -311,25 +326,25 @@ inline __device__ void compute_attn_1rowblock(const Params params, const int bid
     cute::copy(smem_tiled_copy_O, taccOrO, taccOsO);
 
     // copy O from shared memory to global memory
-    // mOclera
-    // shape (seqlen_q, h, d)
+    // mO
+    // shape (seqlen_q, d)
     Tensor mO = make_tensor(
-        make_gmem_ptr(reinterpret_cast<Element*>(params.o_ptr) + binfo.q_offset(params.o_batch_stride, bidb)),
-        make_shape(params.seqlen_q, params.h, params.d),
-        make_stride(params.o_row_stride, params.o_head_stride, _1{})
+        make_gmem_ptr(reinterpret_cast<Element*>(params.o_ptr) + binfo.q_offset(params.o_batch_stride, params.o_head_stride, bidb, bidh)),
+        make_shape(params.seqlen_q, Int<kHeadDim>{}),
+        make_stride(Int<kHeadDim>{}, _1{})
     );
 
     // gO
     Tensor gO = local_tile(
-        mO(_, bidh, _),
+        mO,
         make_shape(kBlockM ,kHeadDim),
-        make_coord(m_block, 0)
+        make_coord(m_block, _)
     );
 
     typename Kernel_traits::GmemTiledCopyO gmem_tiled_copy_O;
     auto gmem_thr_copy_O = gmem_tiled_copy_O.get_thread_slice(tidx);
     auto tOsO = gmem_thr_copy_O.partition_S(sO);
-    auto tOgO = gmem_thr_copy_O.partition_D(gO);
+    auto tOgO = gmem_thr_copy_O.partition_D(gO(_, _, 0));
 
     __syncthreads();
 
